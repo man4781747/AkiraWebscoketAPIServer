@@ -11,6 +11,8 @@
 #include <vector>
 #include <regex>
 #include <TimeLib.h>
+#include <ArduinoOTA.h> 
+#include <HTTPClient.h>
 
 AsyncWebServer asyncServer(80);
 AsyncWebSocket ws("/ws");
@@ -163,6 +165,152 @@ String C_API_SERVER::ConnectWiFiAP(String SSID, String PW)
   }
 }
 
+//! OTA 相關
+
+void OTAServiceTask(void* parameter) {
+  ESP_LOGI("OTA", "Create OTA Service");
+  ArduinoOTA.setPort(3232);
+  ArduinoOTA.onStart([]() {
+    Serial.println("OTA starting...");
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nOTA end!");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("OTA progress: %u%%\r", (progress / (total / 100)));
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("OTA error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      Serial.println("OTA auth failed");
+    } else if (error == OTA_BEGIN_ERROR) {
+      Serial.println("OTA begin failed");
+    } else if (error == OTA_CONNECT_ERROR) {
+      Serial.println("OTA connect failed");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      Serial.println("OTA receive failed");
+    } else if (error == OTA_END_ERROR) {
+      Serial.println("OTA end failed");
+    }
+  });
+  ArduinoOTA.begin();
+  ESP_LOGI("OTA", "Create OTA Done");
+  for(;;){
+    ArduinoOTA.handle();
+    vTaskDelay(1000/portTICK_PERIOD_MS);
+  }
+}
+void C_API_SERVER::CreateOTAService()
+{
+  if (Task__OTAService == NULL) {
+    xTaskCreate(
+      OTAServiceTask, "TASK__OTAService",
+      10000, NULL, 1, &Task__OTAService
+    );
+  }
+}
+
+struct ota_para {
+  String URL;
+};
+
+
+//* 依URL下載檔案並更新
+void UpdateTask(void* parameter)
+{
+  for (;;) {
+    HTTPClient http;
+    ota_para ottaData = *(ota_para*)parameter;
+    ESP_LOGI("URL_OTA", "URL: %s", ottaData.URL.c_str());
+    // http.begin(ottaData.URL);
+    // char* URL = (char*) parameter;
+    // ESP_LOGI("URL_OTA", "URL: %s", URL);
+    // http.begin(String(URL));
+    http.begin("http://35.221.221.94:5566/static/firmware.bin");
+    int http_code = http.GET();
+    ESP_LOGI("OTAUpdateTask", "http_code: %d", http_code);
+    if (http_code == HTTP_CODE_OK) {
+      size_t size = http.getSize();
+      Stream *dataStream = http.getStreamPtr();
+
+      ESP_LOGI("OTAUpdateTask", "MALLOC: %d", size);
+      uint8_t* binData = (uint8_t*)malloc(size);
+      ESP_LOGI("OTAUpdateTask", "readBytes");
+      dataStream->readBytes(binData, size);
+      ESP_LOGI("OTAUpdateTask", "Update being");
+      Update.begin(size);
+      ESP_LOGI("OTAUpdateTask", "Update.write");
+      size_t written = Update.write(binData, size);
+      ESP_LOGI("OTAUpdateTask", "Free");
+      free(binData);
+
+      Serial.printf("written: %d\n", written);
+      if (written == size) {
+        if (Update.end()) {
+          ESP_LOGE("OTAUpdateTask", "OTA更新成功，即將重開機");
+          delay(1000);
+          ESP.restart();
+        } else {
+          ESP_LOGE("OTAUpdateTask", "OTA更更新失敗:%s", Update.errorString());
+        }
+      } else {
+        ESP_LOGE("OTAUpdateTask", "OTA更新失敗:檔案下載不完全");
+      }
+    }
+    vTaskDelay(1000);
+    WebsocketAPIServer.Task__URL_OTA = NULL;
+    vTaskDelete(NULL);
+  }
+}
+
+void ws_OTAapi(AsyncWebSocket *server, AsyncWebSocketClient *client, DynamicJsonDocument *D_baseInfo, DynamicJsonDocument *D_PathParameter, DynamicJsonDocument *D_QueryParameter, DynamicJsonDocument *D_FormData)
+{
+  if ((*D_QueryParameter).containsKey("url")) {
+    String url = (*D_QueryParameter)["url"].as<String>();
+    if (WebsocketAPIServer.Task__URL_OTA == NULL) {
+      xTaskCreate(
+        UpdateTask, "TASK__OTAService",
+        10000, (void *)url.c_str(), 1, &(WebsocketAPIServer.Task__URL_OTA)
+      );
+    }
+  } else {
+    client->binary("");
+  }
+}
+void C_API_SERVER::AddOtaApiOnWebsocketApi(String ApiPath)
+{
+  AddWebsocketAPI(ApiPath, "GET", &ws_OTAapi);
+}
+
+void C_API_SERVER::AddOtaApiOnHTTPApi(String ApiPath)
+{
+  asyncServer.on(ApiPath.c_str(), HTTP_GET, [] (AsyncWebServerRequest *request) {
+    int paramsNr = request->params();
+    bool isParaOK = false;
+    for (int i = 0; i < paramsNr; i++)
+    {
+      AsyncWebParameter* p = request->getParam(i);
+      String paraName = p->name();
+      ESP_LOGI("URL_OTA", "para: %s", paraName.c_str());
+      if (paraName == "url") {
+        isParaOK = true;
+        // String urlPath = p->value();
+        ota_para ota_data;
+        ota_data.URL = String(p->value().c_str());
+        ESP_LOGI("URL_OTA", "urlPath: %s", ota_data.URL.c_str());
+        if (WebsocketAPIServer.Task__URL_OTA == NULL) {
+          xTaskCreate(
+            UpdateTask, "TASK__OTAService",
+            10000, &ota_data, 1, &(WebsocketAPIServer.Task__URL_OTA)
+          );
+        }
+        break;
+      }
+    }
+    request->send(200, "text/plain", "Hello");
+  });
+}
+
 
 void C_API_SERVER::ServerStart()
 {
@@ -216,6 +364,16 @@ time_t C_API_SERVER::GetTimeByNTP()
   }
   configTime(28800, 0, "pool.ntp.org");
   return (time_t)timeClient.getEpochTime();
+}
+
+String C_API_SERVER::GetAPIP()
+{
+  return WiFi.localIP().toString();
+}
+
+void C_API_SERVER::AddHttpAPI(String APIPath, WebRequestMethod METHOD, ArRequestHandlerFunction onRequest)
+{
+  asyncServer.on(APIPath.c_str(), METHOD, onRequest);
 }
 
 C_API_SERVER WebsocketAPIServer;

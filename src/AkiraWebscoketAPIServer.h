@@ -88,18 +88,28 @@ class C_API_SERVER
     void setAPIs();
 
     int GetClientNum();
-
     time_t GetTimeByNTP();
+
+    //! OTA 相關
+
+    void AddOtaApiOnHTTPApi(String ApiPath="/api/OTA");
+    void AddOtaApiOnWebsocketApi(String ApiPath="/api/OTA");
+    TaskHandle_t Task__URL_OTA = NULL;
+
+    void CreateOTAService();
+    TaskHandle_t Task__OTAService = NULL;
 
     ////////////////////////////////////////////////////
     // For 互動相關
     ////////////////////////////////////////////////////
-
+    String GetAPIP();
     DynamicJsonDocument GetBaseWSReturnData(String MessageString);
 
 
     void AddWebsocketAPI(String APIPath, String METHOD, void (*func)(AsyncWebSocket*, AsyncWebSocketClient*, DynamicJsonDocument*, DynamicJsonDocument*, DynamicJsonDocument*, DynamicJsonDocument*));
     std::map<std::string, std::unordered_map<std::string, C_WebsocketAPI*>> websocketApiSetting;
+
+    void AddHttpAPI(String APIPath, WebRequestMethod METHOD, ArRequestHandlerFunction onRequest);
 
   private:
 };
