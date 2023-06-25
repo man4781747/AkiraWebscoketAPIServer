@@ -73,45 +73,35 @@ class C_API_SERVER
     C_API_SERVER(void){
       WiFi.mode(WIFI_AP_STA);
     };
-    AsyncWebServer *asyncServer_ = &asyncServer;
-    AsyncWebSocket *ws_ = &ws;
     int clientNum = 0;
-
-    ////////////////////////////////////////////////////
-    // For 初始化
-    ////////////////////////////////////////////////////
-
+    //? 建立IDE的OTA服務
+    void CreateOTAService();
+    //? 建立LocalAP服務
     bool CreateSoftAP();
+    //? 與WIFI基地台連線
     String ConnectWiFiAP(String SSID, String PW="");
+
+    //? API後台服務建立
     void ServerStart();
 
+    //? 建立基礎API
     void setAPIs();
 
+    //? 獲得Websocket客戶端數量
     int GetClientNum();
+
+    //? 獲得網路時間
     time_t GetTimeByNTP();
 
-    //! OTA 相關
-
-    void AddOtaApiOnHTTPApi(String ApiPath="/api/OTA");
-    void AddOtaApiOnWebsocketApi(String ApiPath="/api/OTA");
-    TaskHandle_t Task__URL_OTA = NULL;
-
-    void CreateOTAService();
-    TaskHandle_t Task__OTAService = NULL;
-
-    ////////////////////////////////////////////////////
-    // For 互動相關
-    ////////////////////////////////////////////////////
-    String GetAPIP();
-    DynamicJsonDocument GetBaseWSReturnData(String MessageString);
-
-
+    //? 核心 - 幫伺服器新增一項websocket的API
     void AddWebsocketAPI(String APIPath, String METHOD, void (*func)(AsyncWebSocket*, AsyncWebSocketClient*, DynamicJsonDocument*, DynamicJsonDocument*, DynamicJsonDocument*, DynamicJsonDocument*));
+    
+    //? websocket的API列表
     std::map<std::string, std::unordered_map<std::string, C_WebsocketAPI*>> websocketApiSetting;
-
-    void AddHttpAPI(String APIPath, WebRequestMethod METHOD, ArRequestHandlerFunction onRequest);
 
   private:
 };
 extern C_API_SERVER WebsocketAPIServer;
+extern AsyncWebServer asyncServer;
+extern AsyncWebSocket ws;
 #endif
